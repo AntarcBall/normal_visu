@@ -1,0 +1,7 @@
+.agent/
+.omx/
+
+itsc-playground/node_modules/
+itsc-playground/dist/
+itsc-playground/playwright-report/
+itsc-playground/test-results/

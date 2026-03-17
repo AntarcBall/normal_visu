@@ -1,0 +1,617 @@
+import { useMemo, useState } from 'react';
+import MathFormula from '../components/MathFormula';
+
+const CANDIDATES = [
+  {
+    key: 'A',
+    code: 'A',
+    title: 'Global train-normal, per-channel',
+    group: 'raw-global',
+    axis: 'per-channel',
+    formula: String.raw`\mu_c=\mathbb{E}_{r\in R_{tr,0},t}[X^{(r)}_{c,t}],\quad \tilde{X}^{(r)}_{c,t}=\frac{X^{(r)}_{c,t}-\mu_c}{s_c+\varepsilon}`,
+    intuition: 'train-normal 전체에서 채널마다 자를 하나씩 고정하는 가장 표준적인 시작점',
+    keeps: '채널 identity, 위상 관계, 정상 기준척도',
+    cost: 'raw amplitude ratio는 affine하게 재표현됨',
+    amplitude: 72,
+    deployment: 88,
+    stability: 82,
+    accent: 'var(--accent-output)',
+  },
+  {
+    key: 'B',
+    code: 'B',
+    title: 'Global train-normal, pooled-channel',
+    group: 'raw-global',
+    axis: 'pooled',
+    formula: String.raw`\mu=\mathbb{E}_{r\in R_{tr,0},c,t}[X^{(r)}_{c,t}],\quad \tilde{X}^{(r)}_{c,t}=\frac{X^{(r)}_{c,t}-\mu}{s+\varepsilon}`,
+    intuition: '세 채널이 하나의 공통 ruler를 공유',
+    keeps: '채널 간 raw amplitude ratio를 더 직접적으로 남김',
+    cost: '큰 분산 채널이 optimizer를 주도할 수 있음',
+    amplitude: 84,
+    deployment: 80,
+    stability: 82,
+    accent: 'var(--accent-key)',
+  },
+  {
+    key: 'C',
+    code: 'C',
+    title: 'Condition-cluster, per-channel',
+    group: 'condition',
+    axis: 'per-channel',
+    formula: String.raw`\mu_{g,c}=\mathbb{E}_{r:g(r)=g,t}[X^{(r)}_{c,t}],\quad \tilde{X}^{(r)}_{c,t}=\frac{X^{(r)}_{c,t}-\mu_{g(r),c}}{s_{g(r),c}+\varepsilon}`,
+    intuition: '같은 운전조건 클러스터 안에서 채널별 자를 따로 둠',
+    keeps: 'health와 operating condition 분리',
+    cost: '추론 때도 조건 메타데이터가 필요하고 소표본 불안정성 존재',
+    amplitude: 70,
+    deployment: 56,
+    stability: 48,
+    accent: 'var(--accent-highlight)',
+  },
+  {
+    key: 'D',
+    code: 'D',
+    title: 'Condition-cluster, pooled-channel',
+    group: 'condition',
+    axis: 'pooled',
+    formula: String.raw`\tilde{X}^{(r)}_{c,t}=\frac{X^{(r)}_{c,t}-\mu_{g(r)}}{s_{g(r)}+\varepsilon}`,
+    intuition: '운전조건마다 공통 자 하나를 씀',
+    keeps: '조건 효과를 크게 흡수',
+    cost: 'ITSC처럼 채널 identity가 중요한 문제엔 다소 거침',
+    amplitude: 78,
+    deployment: 52,
+    stability: 48,
+    accent: 'var(--accent-phase-b)',
+  },
+  {
+    key: 'E',
+    code: 'E',
+    title: 'Run-wise, per-channel',
+    group: 'run-wise',
+    axis: 'per-channel',
+    formula: String.raw`\mu_{r,c}=\frac{1}{T_r}\sum_{t=1}^{T_r}X^{(r)}_{c,t},\quad \tilde{X}^{(r)}_{c,t}=\frac{X^{(r)}_{c,t}-\mu_{r,c}}{s_{r,c}+\varepsilon}`,
+    intuition: 'csv/run마다 채널별 자를 새로 뽑음',
+    keeps: 'run 내부 shape 비교',
+    cost: 'run 전체 amplitude나 imbalance cue를 약하게 만들 수 있음',
+    amplitude: 54,
+    deployment: 42,
+    stability: 100,
+    accent: 'var(--accent-intermediate)',
+  },
+  {
+    key: 'F',
+    code: 'F',
+    title: 'Run-wise, pooled-channel',
+    group: 'run-wise',
+    axis: 'pooled',
+    formula: String.raw`\mu_r=\frac{1}{CT_r}\sum_{c=1}^{C}\sum_t X^{(r)}_{c,t}`,
+    intuition: 'run마다 공통 자 하나를 다시 뽑음',
+    keeps: 'run 내부 상대 모양',
+    cost: '절대 진폭 정보를 더 많이 지울 가능성',
+    amplitude: 40,
+    deployment: 40,
+    stability: 100,
+    accent: 'var(--accent-phase-a)',
+  },
+  {
+    key: 'G',
+    code: 'G',
+    title: 'Post-window global, per-channel',
+    group: 'post-window',
+    axis: 'per-channel',
+    formula: String.raw`\mu_c^{(win)}=\frac{\sum_{r,w,\tau}X^{(r,w)}_{c,\tau}}{\sum_r N_rL_r}=\frac{\sum_{r,t}m_{r,t}X^{(r)}_{c,t}}{\sum_{r,t}m_{r,t}}`,
+    intuition: 'window 샘플링 분포에 맞춰 전역 자를 다시 만듦',
+    keeps: '실제 학습 입력 분포 반영',
+    cost: 'overlap이 크면 같은 raw point가 중복가중됨',
+    amplitude: 62,
+    deployment: 72,
+    stability: 60,
+    accent: 'var(--accent-input)',
+  },
+  {
+    key: 'H',
+    code: 'H',
+    title: 'Window-wise, per-channel',
+    group: 'window-wise',
+    axis: 'per-channel',
+    formula: String.raw`\mu_{r,w,c}=\frac{1}{L_r}\sum_{\tau=1}^{L_r}X^{(r,w)}_{c,\tau}`,
+    intuition: 'window마다 채널별 자를 새로 만드는 instance-wise 후보',
+    keeps: 'local shape distortion 강조',
+    cost: 'amplitude / imbalance / harmonic magnitude cue 약화',
+    amplitude: 22,
+    deployment: 32,
+    stability: 100,
+    accent: 'var(--accent-fault)',
+  },
+  {
+    key: 'I',
+    code: 'I',
+    title: 'Window-wise, pooled-channel',
+    group: 'window-wise',
+    axis: 'pooled',
+    formula: String.raw`\mu_{r,w}=\frac{1}{CL_r}\sum_{c=1}^{C}\sum_{\tau=1}^{L_r}X^{(r,w)}_{c,\tau}`,
+    intuition: 'window 하나에 자 하나를 둠',
+    keeps: 'window 내부 상대 모양만 최대한 남김',
+    cost: 'ITSC에는 대개 너무 공격적',
+    amplitude: 14,
+    deployment: 24,
+    stability: 100,
+    accent: 'var(--accent-error)',
+  },
+  {
+    key: 'J',
+    code: 'J',
+    title: 'Position-wise normalization',
+    group: 'position',
+    axis: 'feature-wise',
+    formula: String.raw`\mu_{c,\tau}=\frac{1}{N}\sum_{(r,w)\in W_{tr,0}}X^{(r,w)}_{c,\tau}`,
+    intuition: 'window 안의 상대 위치마다 따로 자를 둠',
+    keeps: '위상정렬된 template-like 구조',
+    cost: '시작 위상/주파수 변동이 있으면 매우 불안정',
+    amplitude: 36,
+    deployment: 20,
+    stability: 34,
+    accent: 'var(--accent-highlight)',
+  },
+  {
+    key: 'K',
+    code: 'K',
+    title: 'Frequency-bin-wise, global per-channel',
+    group: 'frequency-domain',
+    axis: 'per-channel',
+    formula: String.raw`\tilde{S}^{(r,w)}_{c,k}=\frac{|S^{(r,w)}_{c,k}|-\mu_{c,k}}{\sigma_{c,k}+\varepsilon}`,
+    intuition: 'harmonic bin마다 자를 따로 둠',
+    keeps: '특정 harmonic 영역별 비교',
+    cost: 'raw time-series가 아니라 spectrogram / FFT branch에서만 자연스러움',
+    amplitude: 68,
+    deployment: 66,
+    stability: 74,
+    accent: 'var(--accent-key)',
+  },
+  {
+    key: 'L',
+    code: 'L',
+    title: 'Frequency-bin-wise, instance/window',
+    group: 'frequency-domain',
+    axis: 'instance-bin',
+    formula: String.raw`\tilde{S}^{(r,w)}_{c,k}=\frac{|S^{(r,w)}_{c,k}|-\mu_{r,w,c,k\text{-}block}}{\sigma_{r,w,c,k\text{-}block}+\varepsilon}`,
+    intuition: '주파수 블록도 window 내부에서 자체 표준화',
+    keeps: 'shape-like frequency pattern',
+    cost: '절대 harmonic magnitude cue를 약화',
+    amplitude: 26,
+    deployment: 28,
+    stability: 92,
+    accent: 'var(--accent-phase-b)',
+  },
+];
+
+const GROUPS = [
+  { key: 'all', label: 'All candidates' },
+  { key: 'raw-global', label: 'Raw global' },
+  { key: 'condition', label: 'Condition cluster' },
+  { key: 'run-wise', label: 'Run-wise' },
+  { key: 'post-window', label: 'Post-window global' },
+  { key: 'window-wise', label: 'Window-wise' },
+  { key: 'position', label: 'Position-wise' },
+  { key: 'frequency-domain', label: 'Frequency-domain' },
+];
+const LAB_TITLES = {
+  'lab-01': 'Cycle count → window length',
+  'lab-02': 'Fixed sample vs cycle window',
+  'lab-03': 'Frequency shift intuition',
+  'lab-04': 'Per-channel vs pooled ruler',
+  'lab-05': 'No norm vs center only',
+  'lab-06': 'z-score scale compression',
+  'lab-07': 'Robust vs z-score on outlier',
+  'lab-08': 'Max-abs behavior',
+  'lab-09': 'Unit-norm loses size',
+  'lab-10': 'Global vs run-wise block',
+  'lab-11': 'Condition-cluster idea',
+  'lab-12': 'Overlap reweighting',
+  'lab-13': 'Window-wise aggressiveness',
+  'lab-14': 'Position-wise assumption',
+  'lab-15': 'Frequency-bin-wise branch',
+};
+
+function MetricBar({ label, value, color }) {
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.76rem', color: 'var(--text-secondary)' }}>
+        <span>{label}</span>
+        <span style={{ fontFamily: 'var(--font-mono)', color }}>{value}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 999, background: 'var(--bg-deep)', overflow: 'hidden' }}>
+        <div style={{ width: `${value}%`, height: '100%', background: color, borderRadius: 999 }} />
+      </div>
+    </div>
+  );
+}
+
+function AxisBadge({ axis }) {
+  const tone = axis === 'pooled' ? 'var(--accent-error)' : axis === 'per-channel' ? 'var(--accent-output)' : 'var(--accent-highlight)';
+  return <span className="step-badge" style={{ color: tone }}>{axis}</span>;
+}
+
+function AbstractShapeDiagram({ block, detailed = false }) {
+  const width = detailed ? 460 : 280;
+  const height = detailed ? 170 : 110;
+  const channelColors = ['var(--accent-phase-a)', 'var(--accent-phase-b)', 'var(--accent-phase-c)'];
+  const stroke = block.accent;
+
+  const renderRawGlobal = () => (
+    <>
+      {[0, 1, 2].map((row) => (
+        <g key={row}>
+          <rect x="24" y={24 + row * 36} width="130" height="20" rx="8" fill={channelColors[row]} opacity="0.22" stroke={channelColors[row]} />
+          <rect x="190" y={24 + row * 36} width="80" height="20" rx="10" fill="none" stroke={block.axis === 'pooled' ? stroke : channelColors[row]} strokeDasharray="6 4" />
+          <line x1="154" y1={34 + row * 36} x2="190" y2={34 + row * 36} stroke={stroke} strokeWidth="2" />
+        </g>
+      ))}
+      {block.axis === 'pooled' && <rect x="184" y="18" width="92" height="100" rx="14" fill="none" stroke={stroke} strokeWidth="2.5" />}
+    </>
+  );
+
+  const renderCondition = () => (
+    <>
+      {[0, 1].map((cluster) => (
+        <g key={cluster}>
+          <rect x={24 + cluster * 150} y="20" width="118" height="86" rx="16" fill="none" stroke={cluster === 0 ? 'var(--accent-input)' : 'var(--accent-key)'} strokeDasharray="5 4" />
+          {[0, 1, 2].map((row) => (
+            <rect
+              key={`${cluster}-${row}`}
+              x={36 + cluster * 150}
+              y={34 + row * 20}
+              width="72"
+              height="12"
+              rx="6"
+              fill={channelColors[row]}
+              opacity="0.24"
+              stroke={block.axis === 'pooled' ? stroke : channelColors[row]}
+            />
+          ))}
+          <circle cx={120 + cluster * 150} cy="63" r="16" fill="none" stroke={stroke} strokeWidth="2.2" />
+        </g>
+      ))}
+    </>
+  );
+
+  const renderRunWise = () => (
+    <>
+      {[0, 1, 2].map((run) => (
+        <g key={run}>
+          <rect x={26 + run * 82} y="30" width="64" height="62" rx="14" fill="none" stroke={stroke} />
+          {block.axis === 'pooled' ? (
+            <circle cx={58 + run * 82} cy="61" r="14" fill="rgba(167,139,250,0.14)" stroke={stroke} />
+          ) : (
+            [0, 1, 2].map((row) => (
+              <rect key={`${run}-${row}`} x={36 + run * 82} y={40 + row * 14} width="44" height="8" rx="4" fill={channelColors[row]} opacity="0.26" />
+            ))
+          )}
+        </g>
+      ))}
+    </>
+  );
+
+  const renderPostWindow = () => (
+    <>
+      <rect x="24" y="56" width="260" height="18" rx="9" fill="rgba(96,165,250,0.12)" stroke="var(--accent-input)" />
+      {[0, 1, 2, 3].map((windowIdx) => (
+        <rect key={windowIdx} x={34 + windowIdx * 46} y="42" width="74" height="46" rx="10" fill="none" stroke={stroke} strokeDasharray="6 4" />
+      ))}
+      <circle cx="318" cy="65" r="18" fill="none" stroke={stroke} strokeWidth="2.5" />
+      <line x1="286" y1="65" x2="300" y2="65" stroke={stroke} strokeWidth="2.5" />
+    </>
+  );
+
+  const renderWindowWise = () => (
+    <>
+      {[0, 1, 2].map((windowIdx) => (
+        <g key={windowIdx}>
+          <rect x={28 + windowIdx * 90} y="28" width="74" height="54" rx="12" fill="none" stroke={stroke} />
+          {block.axis === 'pooled' ? (
+            <circle cx={65 + windowIdx * 90} cy="55" r="13" fill="rgba(248,113,113,0.12)" stroke={stroke} />
+          ) : (
+            [0, 1, 2].map((row) => (
+              <rect key={`${windowIdx}-${row}`} x={39 + windowIdx * 90} y={38 + row * 11} width="50" height="7" rx="4" fill={channelColors[row]} opacity="0.24" />
+            ))
+          )}
+        </g>
+      ))}
+    </>
+  );
+
+  const renderPosition = () => (
+    <>
+      <rect x="24" y="28" width="260" height="60" rx="16" fill="none" stroke={stroke} />
+      {[0, 1, 2, 3, 4, 5].map((idx) => (
+        <rect key={idx} x={34 + idx * 40} y="36" width="24" height="44" rx="6" fill={idx % 2 === 0 ? 'var(--accent-highlight)' : 'var(--accent-input)'} opacity="0.22" stroke={idx === 2 ? stroke : 'none'} />
+      ))}
+    </>
+  );
+
+  const renderFrequency = () => (
+    <>
+      {[0, 1, 2, 3, 4, 5].map((idx) => (
+        <rect
+          key={idx}
+          x={28 + idx * 34}
+          y={80 - (idx % 3 + 1) * 14}
+          width="20"
+          height={(idx % 3 + 1) * 14}
+          rx="6"
+          fill={block.axis === 'instance-bin' ? 'var(--accent-phase-b)' : 'var(--accent-key)'}
+          opacity={0.2 + idx * 0.08}
+        />
+      ))}
+      <rect x="246" y="28" width="42" height="58" rx="10" fill="none" stroke={stroke} strokeDasharray="5 4" />
+      <line x1="224" y1="58" x2="246" y2="58" stroke={stroke} strokeWidth="2.5" />
+    </>
+  );
+
+  const body = (() => {
+    switch (block.group) {
+      case 'raw-global':
+        return renderRawGlobal();
+      case 'condition':
+        return renderCondition();
+      case 'run-wise':
+        return renderRunWise();
+      case 'post-window':
+        return renderPostWindow();
+      case 'window-wise':
+        return renderWindowWise();
+      case 'position':
+        return renderPosition();
+      case 'frequency-domain':
+        return renderFrequency();
+      default:
+        return null;
+    }
+  })();
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', background: 'rgba(18,20,28,0.75)', borderRadius: 14, border: '1px solid var(--border)' }}>
+        <rect x="12" y="12" width={width - 24} height={height - 24} rx="18" fill="rgba(255,255,255,0.01)" stroke="rgba(255,255,255,0.04)" />
+        {body}
+      </svg>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <AxisBadge axis={block.axis} />
+        <span className="step-badge">{block.group}</span>
+        {detailed && <span className="step-badge" style={{ color: block.accent }}>idea map</span>}
+      </div>
+    </div>
+  );
+}
+
+function CandidateTile({ block, active, onSelect }) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      style={{
+        cursor: 'pointer',
+        display: 'grid',
+        gap: 10,
+        padding: 'var(--space-md)',
+        borderRadius: 'var(--radius-md)',
+        border: active ? `1px solid ${block.accent}` : '1px solid var(--border)',
+        background: active ? 'linear-gradient(180deg, rgba(167,139,250,0.08), rgba(18,20,28,0.96))' : 'var(--bg-surface)',
+        textAlign: 'left',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'start' }}>
+        <div>
+          <div style={{ color: block.accent, fontWeight: 700, marginBottom: 4 }}>{block.code}. {block.title}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem' }}>{block.intuition}</div>
+        </div>
+        <span className="step-badge" style={{ color: block.accent }}>{block.axis}</span>
+      </div>
+      <AbstractShapeDiagram block={block} />
+      <MathFormula math={block.formula} displayMode />
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <span className="step-badge">{block.group}</span>
+        <span className="step-badge">amp {block.amplitude}</span>
+        <span className="step-badge">deploy {block.deployment}</span>
+      </div>
+    </button>
+  );
+}
+
+export default function NormalizationBlocksSection({ studyState, onStudyChange }) {
+  const activeKey = studyState?.selectedCandidateKey ?? 'A';
+  const activeLabTitle = LAB_TITLES[studyState?.activeLabId];
+  const [groupFilter, setGroupFilter] = useState('all');
+  const [minAmplitude, setMinAmplitude] = useState(0);
+
+  const filteredCandidates = useMemo(() => (
+    CANDIDATES.filter((block) =>
+      (groupFilter === 'all' || block.group === groupFilter) &&
+      block.amplitude >= minAmplitude)
+  ), [groupFilter, minAmplitude]);
+
+  const activeBlock = useMemo(() => {
+    const found = CANDIDATES.find((block) => block.key === activeKey);
+    return found ?? filteredCandidates[0] ?? CANDIDATES[0];
+  }, [activeKey, filteredCandidates]);
+
+  const shortlist = useMemo(
+    () => CANDIDATES.filter((block) => ['A', 'B', 'G', 'H', 'K'].includes(block.key)),
+    [],
+  );
+
+  return (
+    <div>
+      <div className="section-title">🧭 whole.md 재구성 3 — 정규화 블록 후보와 채널 축</div>
+      <div className="section-subtitle">
+        이제 <strong>A ~ L 전체 후보</strong>를 다 펼치고, 버튼과 슬라이더로 필터링하면서 볼 수 있게 만들었습니다.
+        즉 <strong>raw / cluster / run / window / position / frequency-domain</strong> 후보를 한 화면에서 비교할 수 있습니다.
+      </div>
+
+      <div className="formula-display" style={{ marginBottom: 'var(--space-lg)' }}>
+        <MathFormula math={String.raw`\text{Choose statistics block }B\quad +\quad \text{Choose axis }A\quad +\quad \text{Choose representation}` } displayMode />
+        <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          후보 전체를 interactive filter로 좁히고, 하나를 active detail로 깊게 읽는 구조입니다.
+        </span>
+      </div>
+
+      {activeLabTitle && (
+        <div className="callout success" style={{ marginBottom: 'var(--space-lg)' }}>
+          <strong>현재 랩에서 넘어온 컨텍스트</strong><br />
+          <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{activeLabTitle}</span> 랩에서 선택된 관련 후보가
+          현재 <MathFormula math={String.raw`\text{active block}`} /> 로 반영되어 있습니다.
+        </div>
+      )}
+
+      <div className="section-grid cols-3" style={{ marginBottom: 'var(--space-lg)' }}>
+        <div className="card stage-active">
+          <div style={{ color: 'var(--accent-output)', fontWeight: 700, marginBottom: 8 }}>All candidates</div>
+          <div className="stat-value" style={{ color: 'var(--accent-output)' }}>{CANDIDATES.length}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>A ~ L 전체 후보를 포함</div>
+        </div>
+        <div className="card">
+          <div style={{ color: 'var(--accent-key)', fontWeight: 700, marginBottom: 8 }}>Current filter</div>
+          <div className="stat-value" style={{ color: 'var(--accent-key)', fontSize: '1.2rem' }}>{groupFilter}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>min amplitude = {minAmplitude}</div>
+        </div>
+        <div className="card">
+          <div style={{ color: activeBlock.accent, fontWeight: 700, marginBottom: 8 }}>Active block</div>
+          <div className="stat-value" style={{ color: activeBlock.accent, fontSize: '1.1rem' }}>{activeBlock.code}</div>
+          <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeBlock.title}</div>
+        </div>
+      </div>
+
+      <div className="control-panel" style={{ marginBottom: 'var(--space-lg)' }}>
+        <div className="control-group">
+          <label className="control-label">Candidate family filter</label>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            {GROUPS.map((group) => (
+              <button
+                key={group.key}
+                className={`btn ${groupFilter === group.key ? 'active' : ''}`}
+                onClick={() => setGroupFilter(group.key)}
+              >
+                {group.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="control-group">
+          <label className="control-label">Min amplitude retention</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={5}
+              value={minAmplitude}
+              onChange={(event) => setMinAmplitude(Number(event.target.value))}
+              style={{ width: 180 }}
+            />
+            <span style={{ minWidth: 44, fontFamily: 'var(--font-mono)', color: 'var(--accent-highlight)', fontWeight: 700 }}>
+              {minAmplitude}
+            </span>
+          </div>
+        </div>
+
+        <div className="control-group" style={{ marginLeft: 'auto' }}>
+          <label className="control-label">Filtered count</label>
+          <div className="step-badge">{filteredCandidates.length} candidates</div>
+        </div>
+      </div>
+
+      <div className="section-grid cols-2" style={{ marginBottom: 'var(--space-lg)' }}>
+        <div className="card stage-active" style={{ display: 'grid', gap: 14 }}>
+          <div>
+            <div style={{ color: activeBlock.accent, fontWeight: 700, marginBottom: 6 }}>{activeBlock.code}. {activeBlock.title}</div>
+            <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>{activeBlock.intuition}</div>
+          </div>
+          <AbstractShapeDiagram block={activeBlock} detailed />
+          <MathFormula math={activeBlock.formula} displayMode />
+          <div className="callout">
+            <strong>Abstract idea</strong><br />
+            {activeBlock.group === 'raw-global' && '큰 컨테이너 하나에서 자를 고정한다는 뜻입니다. pooled냐 per-channel이냐에 따라 원이 하나인지 채널 바가 셋인지가 달라집니다.'}
+            {activeBlock.group === 'condition' && '클러스터 박스별로 자를 따로 둔다는 뜻입니다. 즉 g(r) 단위로 정상 분포를 다시 정렬합니다.'}
+            {activeBlock.group === 'run-wise' && 'run 박스마다 자를 다시 뽑습니다. 각 csv가 자기 내부 좌표계로 들어갑니다.'}
+            {activeBlock.group === 'post-window' && '겹치는 window 박스가 같은 raw 줄 위를 덮으면서, 중앙 point가 더 많이 세어진다는 것을 표현합니다.'}
+            {activeBlock.group === 'window-wise' && 'window 한 개 한 개가 자기 자신 안에서 재정렬됩니다. pooled면 원 하나, per-channel이면 3줄이 따로 정규화됩니다.'}
+            {activeBlock.group === 'position' && 'window 안의 상대 위치 τ 마다 별도 feature ruler를 두는 것을 줄무늬 칸으로 표현합니다.'}
+            {activeBlock.group === 'frequency-domain' && '시간축 대신 harmonic/bin 막대 위에 ruler를 두는 것을 주파수 막대로 추상화했습니다.'}
+          </div>
+          <div className="callout success"><strong>무엇을 남기나</strong><br />{activeBlock.keeps}</div>
+          <div className="callout danger"><strong>무엇을 희생하나</strong><br />{activeBlock.cost}</div>
+          <div style={{ display: 'grid', gap: 10 }}>
+            <MetricBar label="Amplitude retention" value={activeBlock.amplitude} color={activeBlock.accent} />
+            <MetricBar label="Deployment realism" value={activeBlock.deployment} color="var(--accent-input)" />
+            <MetricBar label="Statistic stability" value={activeBlock.stability} color="var(--accent-highlight)" />
+          </div>
+        </div>
+
+        <div className="card" style={{ display: 'grid', gap: 14 }}>
+          <div style={{ color: 'var(--accent-output)', fontWeight: 700 }}>How to read the full space</div>
+          <div className="callout">
+            <strong>Raw-global</strong><br />
+            가장 전통적인 train-normal 기준 자.
+          </div>
+          <div className="callout">
+            <strong>Condition-cluster</strong><br />
+            <MathFormula math={String.raw`g(r)=(f_r,\ell_r)`} /> 별 정상 분포 차이를 흡수하려는 철학.
+          </div>
+          <div className="callout">
+            <strong>Run-wise / Window-wise</strong><br />
+            테스트 인스턴스 자기 자신에서 자를 다시 계산하는 local normalization 계열.
+          </div>
+          <div className="callout warn">
+            <strong>Position / Frequency-domain</strong><br />
+            flattened feature나 spectrogram branch 같은 표현을 쓸 때만 자연스러운 특수 후보들.
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gap: 'var(--space-md)', marginBottom: 'var(--space-lg)' }}>
+        {filteredCandidates.map((block) => (
+          <CandidateTile
+            key={block.key}
+            block={block}
+            active={block.key === activeBlock.key}
+            onSelect={() => onStudyChange((prev) => ({ ...prev, selectedCandidateKey: block.key }))}
+          />
+        ))}
+      </div>
+
+      <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+        <div style={{ color: 'var(--accent-key)', fontWeight: 700, marginBottom: 12 }}>Starter shortlist for practical experiments</div>
+        <div className="section-grid cols-3">
+          {shortlist.map((block) => (
+            <div key={block.key} className="card-glass" style={{ padding: 'var(--space-md)' }}>
+              <div style={{ color: block.accent, fontWeight: 700, marginBottom: 6 }}>{block.code}. {block.title}</div>
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.82rem', marginBottom: 8 }}>{block.intuition}</div>
+              <MathFormula math={block.formula} displayMode />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 'var(--space-lg)' }}>
+        <div style={{ color: 'var(--accent-output)', fontWeight: 700, marginBottom: 12 }}>All candidates, each with an idea</div>
+        <div className="section-grid cols-3">
+          {CANDIDATES.map((block) => (
+            <div key={`idea-${block.key}`} className="card-glass" style={{ padding: 'var(--space-md)', display: 'grid', gap: 10 }}>
+              <div style={{ color: block.accent, fontWeight: 700 }}>{block.code}. {block.title}</div>
+              <AbstractShapeDiagram block={block} />
+              <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.7 }}>
+                <strong style={{ color: 'var(--text-primary)' }}>Idea:</strong> {block.intuition}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="callout success">
+        <strong>Ralph conclusion</strong><br />
+        이제 `whole.md 재구성 3`은 일부 후보가 아니라 <strong>A ~ L 전부</strong>를 interactive하게 탐색할 수 있고,
+        각 후보마다 <strong>추상 shape visualization + idea 설명</strong>이 함께 붙어 있습니다.
+      </div>
+    </div>
+  );
+}
