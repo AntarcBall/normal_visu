@@ -2,16 +2,16 @@
 
 :root {
   /* Backgrounds */
-  --bg-primary: #0f1117;
-  --bg-surface: #1a1d27;
-  --bg-deep: #12141c;
-  --bg-elevated: #252836;
-  --bg-glass: rgba(26, 29, 39, 0.85);
+  --bg-primary: #09111f;
+  --bg-surface: #121c2f;
+  --bg-deep: #0d1728;
+  --bg-elevated: #1a2740;
+  --bg-glass: rgba(12, 19, 34, 0.76);
 
   /* Text */
-  --text-primary: #e4e7ec;
-  --text-secondary: #9ba3b5;
-  --text-muted: #5d6678;
+  --text-primary: #eef4ff;
+  --text-secondary: #b5c3d9;
+  --text-muted: #72819c;
 
   /* Semantic accent colors */
   --accent-input: #60a5fa;
@@ -61,7 +61,10 @@ html {
 
 body {
   font-family: var(--font-sans);
-  background: var(--bg-primary);
+  background:
+    radial-gradient(circle at top left, rgba(125, 211, 252, 0.10), transparent 22%),
+    radial-gradient(circle at top right, rgba(167, 139, 250, 0.12), transparent 18%),
+    linear-gradient(180deg, #07111f 0%, #09111f 100%);
   color: var(--text-primary);
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
@@ -137,15 +140,17 @@ body {
 
 /* ─────────── Card Styles ─────────── */
 .card {
-  background: var(--bg-surface);
-  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.025));
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
-  transition: border-color 0.3s, box-shadow 0.3s;
+  transition: transform 0.25s ease, border-color 0.3s, box-shadow 0.3s;
+  box-shadow: 0 18px 40px rgba(4, 10, 24, 0.18);
 }
 .card:hover {
-  border-color: var(--border-active);
-  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+  transform: translateY(-2px);
+  border-color: rgba(125, 211, 252, 0.18);
+  box-shadow: 0 20px 42px rgba(0, 0, 0, 0.28);
 }
 .card-glass {
   background: var(--bg-glass);

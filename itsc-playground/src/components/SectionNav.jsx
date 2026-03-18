@@ -2,73 +2,55 @@ import MathFormula from './MathFormula';
 
 export default function SectionNav({ sections, active, onChange }) {
     const groups = [
-        { key: 'playground', label: 'Playground' },
-        { key: 'reference', label: 'Reference' },
+        { key: 'playground', label: 'Playground', description: '실험적으로 만져보는 인터랙션 섹션' },
+        { key: 'reference', label: 'Reference', description: '개념과 수식을 안정적으로 읽는 섹션' },
     ];
 
     return (
-        <nav style={{ display: 'grid', gap: 'var(--space-md)' }}>
+        <nav className="section-nav-shell card-glass">
+            <div className="section-nav-header">
+                <div>
+                    <div className="section-nav-kicker">Study map</div>
+                    <h2>탐색 패널</h2>
+                </div>
+                <p>주제를 건너뛰지 않고도 원하는 섹션으로 빠르게 이동할 수 있게 흐름을 재정리했습니다.</p>
+            </div>
             {groups.map((group) => {
                 const groupedSections = sections.filter((section) => section.group === group.key);
                 if (groupedSections.length === 0) return null;
 
                 return (
-                    <div key={group.key} style={{ display: 'grid', gap: 'var(--space-sm)' }}>
-                        <div style={{
-                            fontSize: '0.72rem',
-                            color: 'var(--text-muted)',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.1em',
-                            fontWeight: 700,
-                        }}>
-                            {group.label}
+                    <div key={group.key} className="section-nav-group">
+                        <div className="section-nav-group-meta">
+                            <div className="section-nav-group-title">{group.label}</div>
+                            <div className="section-nav-group-desc">{group.description}</div>
                         </div>
-                        <div style={{
-                            display: 'flex',
-                            gap: 'var(--space-sm)',
-                            flexWrap: 'wrap',
-                        }}>
+                        <div className="section-nav-list">
                             {groupedSections.map((s) => (
                                 <button
                                     key={s.id}
-                                    className={`btn ${active === s.id ? 'active' : ''}`}
+                                    className={`section-nav-button ${active === s.id ? 'active' : ''}`}
                                     onClick={() => onChange(s.id)}
                                     aria-label={s.label}
-                                    style={{
-                                        borderRadius: 24,
-                                        padding: '8px 18px',
-                                        display: 'flex',
-                                        alignItems: 'center',
-                                        gap: 8,
-                                        ...(active === s.id
-                                            ? {
-                                                background: 'rgba(96, 165, 250, 0.13)',
-                                                borderColor: 'var(--accent-input)',
-                                                boxShadow: '0 0 16px rgba(96,165,250,0.1)',
-                                            }
-                                            : {}),
-                                    }}
                                 >
-                                    <span>{s.icon}</span>
-                                    <span style={{ fontWeight: 600 }}>{s.label}</span>
-                                    {s.formula ? (
-                                        <MathFormula
-                                            math={s.formula}
-                                            className="section-nav-formula"
-                                            style={{
-                                                fontSize: '0.78rem',
-                                                color: active === s.id ? 'var(--accent-intermediate)' : 'var(--text-muted)',
-                                            }}
-                                        />
-                                    ) : (
-                                        <span style={{
-                                            fontSize: '0.7rem',
-                                            color: active === s.id ? 'var(--accent-intermediate)' : 'var(--text-muted)',
-                                            fontFamily: 'var(--font-mono)',
-                                        }}>
-                                            {s.desc}
-                                        </span>
-                                    )}
+                                    <div className="section-nav-button-main">
+                                        <span className="section-nav-icon">{s.icon}</span>
+                                        <div>
+                                            <span className="section-nav-label">{s.label}</span>
+                                            <div className="section-nav-meta">
+                                                {s.formula ? (
+                                                    <MathFormula
+                                                        math={s.formula}
+                                                        className="section-nav-formula"
+                                                        style={{ fontSize: '0.78rem' }}
+                                                    />
+                                                ) : (
+                                                    <span className="section-nav-desc">{s.desc}</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <span className="section-nav-arrow" aria-hidden="true">↗</span>
                                 </button>
                             ))}
                         </div>
