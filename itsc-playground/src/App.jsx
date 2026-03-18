@@ -26,6 +26,12 @@ const SECTIONS = [
   { id: 'channel-timing', label: '채널/시점', icon: '🧭', formula: String.raw`\tilde{X}_{c,\cdot},\ \mu_c^{\mathrm{raw}}`, group: 'reference' },
 ];
 
+const QUICK_FACTS = [
+  { label: '보존 원칙', value: '기존 학습 콘텐츠 유지' },
+  { label: '탐색 방식', value: '플레이그라운드 + 레퍼런스' },
+  { label: '핵심 초점', value: '정규화·윈도우링·계층 해석' },
+];
+
 export default function App() {
   const [activeSection, setActiveSection] = useState('whole-structure');
   const [studyState, setStudyState] = useState({
@@ -53,6 +59,8 @@ export default function App() {
     window.history.replaceState(null, '', `#${activeSection}`);
   }, [activeSection]);
 
+  const activeSectionMeta = SECTIONS.find((section) => section.id === activeSection) ?? SECTIONS[0];
+
   const renderSection = () => {
     switch (activeSection) {
       case 'cycle-window': return <CycleWindowSection />;
@@ -70,26 +78,48 @@ export default function App() {
 
   return (
     <div className="app-container">
-      <Header />
-      <div className="main-layout">
-        <SectionNav
-          sections={SECTIONS}
-          active={activeSection}
-          onChange={setActiveSection}
-        />
-        <main className="content-area">
-          <div className="section-wrapper animate-fadeInUp" key={activeSection}>
-            <Suspense fallback={<div className="card">Loading section…</div>}>
-              {renderSection()}
-            </Suspense>
-          </div>
-        </main>
+      <div className="app-shell">
+        <Header activeSection={activeSectionMeta} quickFacts={QUICK_FACTS} />
+        <div className="main-layout">
+          <aside className="sidebar-column">
+            <SectionNav
+              sections={SECTIONS}
+              active={activeSection}
+              onChange={setActiveSection}
+            />
+            <ColorLegend />
+          </aside>
+          <main className="content-area">
+            <div className="content-intro card-glass animate-fadeIn">
+              <div>
+                <div className="content-kicker">Currently viewing</div>
+                <div className="content-focus-row">
+                  <span className="content-focus-icon" aria-hidden="true">{activeSectionMeta.icon}</span>
+                  <div>
+                    <h2>{activeSectionMeta.label}</h2>
+                    <p>
+                      기존 설명과 수식은 그대로 유지하면서, 읽는 흐름이 더 자연스럽도록 화면 밀도와 시각적 위계를 다듬었습니다.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              <div className="content-status-pill">
+                <span>원본 콘텐츠 보존</span>
+                <strong>ON</strong>
+              </div>
+            </div>
+            <div className="section-wrapper animate-fadeInUp" key={activeSection}>
+              <Suspense fallback={<div className="card">Loading section…</div>}>
+                {renderSection()}
+              </Suspense>
+            </div>
+          </main>
+        </div>
+        <footer className="app-footer">
+          <span>ITSC Anomaly Detection — Interactive Study Playground</span>
+          <span style={{ color: 'var(--text-muted)' }}>Built with React + Vite</span>
+        </footer>
       </div>
-      <ColorLegend />
-      <footer className="app-footer">
-        <span>ITSC Anomaly Detection — Interactive Study Playground</span>
-        <span style={{ color: 'var(--text-muted)' }}>Built with React + Vite</span>
-      </footer>
     </div>
   );
 }

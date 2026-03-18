@@ -10,12 +10,14 @@ export default function ColorLegend() {
     ];
 
     return (
-        <div style={{
-            maxWidth: 1400,
-            margin: '0 auto',
-            width: '100%',
-            padding: '0 var(--space-lg) var(--space-md)',
-        }}>
+        <div className="legend-shell card">
+            <div className="legend-header">
+                <div>
+                    <div className="legend-kicker">Color language</div>
+                    <strong>범례</strong>
+                </div>
+                <span className="legend-note">원래 의미 체계 유지</span>
+            </div>
             <div className="legend">
                 {items.map((item, i) => (
                     <div className="legend-item" key={i}>
